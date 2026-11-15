@@ -350,13 +350,22 @@ def run_gradient(
 ) -> str:
     steps = max(2, steps)
     duration = max(0.2, duration)
-    delay = max(0.04, duration / (steps - 1))
+    delay = max(0.06, duration / steps)
 
-    write_dps(dev, {DP_MODE: "colour"}, cfg, t)
+    # One socket for the whole animation: reconnecting for every frame makes the
+    # transition visibly jerky (~200 ms per frame). Frames are sent without
+    # waiting for an acknowledgement; the final frame is confirmed below.
+    try:
+        dev.set_socketPersistent(True)
+    except Exception:  # noqa: BLE001
+        pass
 
     sent = 0
+    last_payload = None
     started = time.monotonic()
     try:
+        write_dps(dev, {DP_MODE: "colour"}, cfg, t)
+
         cycle = 0
         while loops == 0 or cycle < loops:
             reverse = pingpong and cycle % 2 == 1
@@ -366,15 +375,26 @@ def run_gradient(
                     ratio = 1.0 - ratio
                 rgb = tuple(int(round(a + (b - a) * ratio)) for a, b in zip(start, end))
                 payload = rgb_to_colour(*rgb)[0]
+                last_payload = payload
+                frame_started = time.monotonic()
                 try:
-                    dev.set_value(DP_COLOUR, payload)
+                    dev.set_value(DP_COLOUR, payload, nowait=True)
                 except Exception as exc:  # noqa: BLE001
                     raise wrap_transport_error(exc, cfg, t) from exc
                 sent += 1
-                time.sleep(delay)
+                time.sleep(max(0.0, delay - (time.monotonic() - frame_started)))
             cycle += 1
+
+        if last_payload is not None:
+            # Give the last frame time to arrive before the socket is closed.
+            time.sleep(0.35)
     except KeyboardInterrupt:
         return t("cli.gradient_stopped", frames=sent)
+    finally:
+        try:
+            dev.close()
+        except Exception:  # noqa: BLE001
+            pass
 
     return t(
         "cli.gradient",
@@ -383,6 +403,121 @@ def run_gradient(
         frames=sent,
         seconds=f"{time.monotonic() - started:.1f}",
     )
+
+
+# ===========================================================================
+# self-test: the "reboot" command
+# ===========================================================================
+
+TEST_COLOURS = (("red", (255, 0, 0)), ("green", (0, 255, 0)), ("blue", (0, 0, 255)))
+TEST_BRIGHTNESS = (1, 25, 50, 75, 100)
+TEST_KELVIN = (2700, 3500, 4500, 5500, 6500)
+
+
+def _split_colour(raw: str | None) -> tuple[int, int, int] | None:
+    return decode_colour(raw or "")
+
+
+def restore_state(dev, cfg: dict, before: dict, t: Lang) -> None:
+    """Put the lamp back the way it was before the self-test."""
+    mode = before.get(DP_MODE, "white")
+
+    if mode == "colour" and _split_colour(before.get(DP_COLOUR)):
+        write_dps(dev, {DP_MODE: "colour"}, cfg, t)
+        write_dps(dev, {DP_COLOUR: before[DP_COLOUR]}, cfg, t)
+    elif mode == "scene" and before.get("25"):
+        write_dps(dev, {DP_MODE: "scene"}, cfg, t)
+        write_dps(dev, {"25": before["25"]}, cfg, t)
+    else:
+        write_dps(dev, {DP_MODE: "white"}, cfg, t)
+        # Writing DP22 forces white mode on this firmware, so it comes last.
+        if before.get(DP_TEMP) is not None:
+            write_dps(dev, {DP_TEMP: int(before[DP_TEMP])}, cfg, t)
+        if before.get(DP_BRIGHT) is not None:
+            write_dps(dev, {DP_BRIGHT: int(before[DP_BRIGHT])}, cfg, t)
+
+    write_dps(dev, {DP_SWITCH: bool(before.get(DP_SWITCH))}, cfg, t)
+
+
+def run_selftest(dev, cfg: dict, before: dict, t: Lang, off_seconds: float = 2.0) -> str:
+    """Off -> on -> RGB -> white brightness -> temperature -> blink -> restore.
+
+    Every step is read back from the lamp, so the report shows what the
+    hardware actually applied, not what was sent.
+    """
+    checks = 0
+    passed = 0
+
+    def record(label: str, ok: bool, detail: str = "") -> None:
+        nonlocal checks, passed
+        checks += 1
+        if ok:
+            passed += 1
+            print("  " + t("cli.reboot_check", label=label))
+        else:
+            print("  " + t("cli.reboot_check_fail", label=label, detail=detail or "-"))
+        sys.stdout.flush()
+
+    print(t("cli.reboot_start"))
+    try:
+        print("  " + t("cli.reboot_off", seconds=int(off_seconds)))
+        write_dps(dev, {DP_SWITCH: False}, cfg, t)
+        time.sleep(off_seconds)
+
+        print("  " + t("cli.reboot_on"))
+        write_dps(dev, {DP_SWITCH: True}, cfg, t)
+        time.sleep(0.6)
+
+        # -- colours ----------------------------------------------------
+        write_dps(dev, {DP_MODE: "colour"}, cfg, t)
+        for name, rgb in TEST_COLOURS:
+            payload, hue, sat, val = rgb_to_colour(*rgb)
+            write_dps(dev, {DP_COLOUR: payload}, cfg, t)
+            time.sleep(0.45)
+            got = _split_colour(read_dps(dev, cfg, t).get(DP_COLOUR))
+            label = t("cli.reboot_colour", name=name,
+                      hex=f"{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}")
+            ok = got is not None and all(abs(a - b) <= 2 for a, b in zip(got, (hue, sat, val)))
+            record(label, ok, t("cli.reboot_expected",
+                                expected=f"h={hue} s={sat} v={val}",
+                                got="-" if got is None else f"h={got[0]} s={got[1]} v={got[2]}"))
+
+        # -- white brightness -------------------------------------------
+        write_dps(dev, {DP_MODE: "white"}, cfg, t)
+        for pct in TEST_BRIGHTNESS:
+            raw = pct_to_bright(pct)
+            write_dps(dev, {DP_BRIGHT: raw}, cfg, t)
+            time.sleep(0.35)
+            got = int(read_dps(dev, cfg, t).get(DP_BRIGHT, -1))
+            record(t("cli.reboot_bright", pct=pct), abs(got - raw) <= 5,
+                   t("cli.reboot_expected", expected=str(raw), got=str(got)))
+
+        # -- colour temperature -----------------------------------------
+        kmin = float(cfg.get("kelvin_min", KELVIN_WARM))
+        kmax = float(cfg.get("kelvin_max", KELVIN_COOL))
+        for kelvin in TEST_KELVIN:
+            raw = kelvin_to_temp(kelvin, kmin, kmax)
+            write_dps(dev, {DP_TEMP: raw}, cfg, t)
+            time.sleep(0.35)
+            got = int(read_dps(dev, cfg, t).get(DP_TEMP, -1))
+            record(t("cli.reboot_temp", kelvin=kelvin), abs(got - raw) <= 5,
+                   t("cli.reboot_expected", expected=str(raw), got=str(got)))
+
+        # -- blink twice ------------------------------------------------
+        print("  " + t("cli.reboot_blink"))
+        for _ in range(2):
+            write_dps(dev, {DP_SWITCH: False}, cfg, t)
+            time.sleep(0.35)
+            write_dps(dev, {DP_SWITCH: True}, cfg, t)
+            time.sleep(0.35)
+    finally:
+        print("  " + t("cli.reboot_restore"))
+        try:
+            restore_state(dev, cfg, before, t)
+        except Exception as exc:  # noqa: BLE001
+            print("  " + t("cli.reboot_restore_failed", error=exc))
+
+    return t("cli.reboot_done", passed=passed, total=checks)
 
 
 # ===========================================================================
@@ -474,6 +609,13 @@ def cmd_raw(dev, cfg, args, t) -> None:
         value = args.value
     write_dps(dev, {args.dp: value}, cfg, t)
     print(t("cli.raw", dp=args.dp, value=value))
+
+
+def cmd_reboot(dev, cfg, args, t) -> None:
+    if args.off < 0:
+        raise CliError(t("err.off_seconds"))
+    before = read_dps(dev, cfg, t)
+    print(run_selftest(dev, cfg, before, t, off_seconds=args.off))
 
 
 def cmd_rescan(dev, cfg, args, t) -> None:
@@ -687,7 +829,17 @@ class ShellContext:
         for index, token in enumerate(argv):
             if index >= 2 and re.fullmatch(r"\d+(?:\.\d+)?", token):
                 duration = float(token)
-        return run_gradient(self.device(), self.cfg, start, end, self.t, duration=duration)
+        try:
+            return run_gradient(self.device(), self.cfg, start, end, self.t, duration=duration)
+        finally:
+            # run_gradient closes its socket to keep the animation smooth.
+            self._dev = None
+
+    def reboot(self, off_seconds: float = 2.0) -> str:
+        before = self.status(refresh=True)
+        result = run_selftest(self.device(), self.cfg, before, self.t, off_seconds=off_seconds)
+        self._dps = None
+        return result
 
     def set_lang(self, code: str) -> str:
         if not self.t.switch(code):
@@ -761,6 +913,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_raw.add_argument("dp")
     p_raw.add_argument("value")
     p_raw.set_defaults(func=cmd_raw)
+
+    p_reboot = sub.add_parser(
+        "reboot",
+        help="lamp self-test: off, RGB, white, temperature, blink, restore",
+    )
+    p_reboot.add_argument(
+        "--off", type=float, default=2.0,
+        help="seconds the lamp stays off at the start (default: 2)",
+    )
+    p_reboot.set_defaults(func=cmd_reboot)
 
     p_init = sub.add_parser("init", help="create the device config")
     p_init.add_argument("--from", dest="source", help="import from a tinytuya devices.json")

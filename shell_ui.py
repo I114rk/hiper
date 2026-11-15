@@ -179,7 +179,8 @@ DESC: dict[str, tuple[str, str]] = {
     "wifi": ("Wi-Fi parameters", "параметры Wi-Fi"),
     "history": ("command history", "история команд"),
     "sudo": ("run as root", "выполнить от root"),
-    "reboot": ("reboot", "перезагрузка"),
+    "reboot": ("self-test and restore state", "самопроверка и восстановление"),
+    "poweroff": ("not permitted", "не разрешено"),
 }
 
 USAGE: dict[str, str] = {
@@ -220,7 +221,8 @@ USAGE: dict[str, str] = {
     "wifi": "wifi",
     "history": "history",
     "sudo": "sudo <command>",
-    "reboot": "reboot",
+    "reboot": "reboot [--off seconds]",
+    "poweroff": "poweroff",
 }
 
 
@@ -322,7 +324,8 @@ class Shell:
         add("wifi", self.h_wifi, "iwconfig")
         add("history", self.h_history)
         add("sudo", self.h_sudo)
-        add("reboot", self.h_reboot, "poweroff", "shutdown", "halt")
+        add("reboot", self.h_reboot)
+        add("poweroff", self.h_poweroff, "shutdown", "halt")
 
     # -- автодополнение -------------------------------------------------
 
@@ -443,7 +446,7 @@ class Shell:
 
         groups = [
             ("shell.help_lamp", ["status", "on", "off", "toggle", "set", "mode", "gradient", "raw", "info"]),
-            ("shell.help_system", ["uname", "hostname", "whoami", "id", "date", "uptime", "free", "df", "ps", "dmesg"]),
+            ("shell.help_system", ["uname", "hostname", "whoami", "id", "date", "uptime", "free", "df", "ps", "dmesg", "reboot", "poweroff"]),
             ("shell.help_files", ["pwd", "cd", "ls", "cat", "echo"]),
             ("shell.help_network", ["ifconfig", "ping", "curl", "ssh", "telnet", "wifi"]),
             ("shell.help_misc", ["neofetch", "lang", "history", "clear", "help", "exit"]),
@@ -882,5 +885,15 @@ class Shell:
         self.dispatch(" ".join(args))
 
     def h_reboot(self, args: list[str]) -> None:
+        off = 2.0
+        if "--off" in args:
+            try:
+                off = max(0.0, float(args[args.index("--off") + 1]))
+            except (IndexError, ValueError):
+                self.error("usage: reboot [--off seconds]")
+                return
+        self.ok(self.ctx.reboot(off))
+
+    def h_poweroff(self, args: list[str]) -> None:
         self.error(self.t("shell.reboot_denied"))
         print(paint("  " + self.t("shell.reboot_note"), DIM))

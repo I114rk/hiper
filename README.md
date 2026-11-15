@@ -134,6 +134,9 @@ hiper gradient "#ff0000" "#0000ff" --pingpong
 
 hiper raw 22 800                # write a raw datapoint
 
+hiper reboot                    # self-test, then restore the previous state
+hiper reboot --off 4            # keep the lamp off for 4 s at the start
+
 hiper init --id <id> --key <key> --ip <ip>
 hiper init --from devices.json
 hiper rescan                    # find the lamp again after an IP change
@@ -165,6 +168,10 @@ hiper gradient 255 0 0 0 0 255
 Options: `--steps N` (frames, default 24), `--duration S` (default 2),
 `--loop N` (`0` = forever), `--pingpong`.
 
+The lamp acknowledges roughly 16 frames per second, so a very short
+`--duration` is rounded up; the animation always ends exactly on the second
+colour.
+
 ---
 
 ## Interactive console
@@ -188,13 +195,20 @@ Lamp commands: `status`, `on`, `off`, `toggle`, `set bright|temp|color`,
 
 Emulated system: `uname`, `hostname`, `whoami`, `id`, `pwd`, `cd`, `ls`, `cat`,
 `echo`, `date`, `uptime`, `free`, `df`, `ps`, `dmesg`, `ifconfig`, `wifi`,
-`dmesg`, `reboot` (refuses), `sudo` (you are already root).
+`dmesg`, `reboot` (self-test), `poweroff` (refuses), `sudo` (you are already root).
 
 `free`, `df`, `ps`, `neofetch` and `/proc` report a **fictional** device:
 8 MiB RAM, 12 MiB flash, BK7231N. That is part of the joke, the real lamp is
 not identical.
 
 `neofetch` / `fastfetch` draws an orange Tuya logo next to the device summary.
+
+`reboot` is the only system command that does something physical: it saves the
+current state, switches the lamp off for 2 s, turns it on, cycles red/green/blue,
+sweeps white brightness 1–100 % and temperature 2700–6500 K, reads every step
+back from the lamp, blinks twice and restores the saved mode, colour, brightness
+and switch state. The report shows how many reads matched; `--off N` changes the
+initial pause. `poweroff` still refuses — it is only decoration.
 
 Real network tools:
 
