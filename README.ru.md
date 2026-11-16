@@ -119,7 +119,7 @@ hiper off
 hiper toggle
 hiper status [--json]
 
-hiper mode set color|white|scene|music
+hiper mode set color|white|scene|music   # "colour" то же, что "color"
 
 hiper set bright 1-100          # проценты
 hiper set temp 1000-6000        # кельвины, обрезаются по диапазону лампы

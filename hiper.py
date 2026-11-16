@@ -47,6 +47,8 @@ BRIGHT_MIN, BRIGHT_MAX = 10, 1000
 TEMP_MIN, TEMP_MAX = 0, 1000
 KELVIN_WARM, KELVIN_COOL = 2700.0, 6500.0
 MODES = ("white", "colour", "scene", "music")
+MODE_ALIASES = {"white": "white", "colour": "colour", "color": "colour",
+                "scene": "scene", "music": "music"}
 DP_SEND_DELAY = 0.25
 LAMP_NAME = "Hiper IoT A61 RGB"
 
@@ -426,8 +428,9 @@ def cmd_status(dev, cfg, args, t) -> None:
 
 
 def cmd_mode(dev, cfg, args, t) -> None:
-    write_dps(dev, {DP_MODE: args.value}, cfg, t)
-    print(t("cli.mode", mode=args.value))
+    mode = MODE_ALIASES[args.value]
+    write_dps(dev, {DP_MODE: mode}, cfg, t)
+    print(t("cli.mode", mode=mode))
 
 
 def cmd_bright(dev, cfg, args, t) -> None:
@@ -664,8 +667,9 @@ class ShellContext:
         return self.t("cli.colour", hex=f"{r:02x}{g:02x}{b:02x}", h=hue, s=sat, v=val)
 
     def set_mode(self, mode: str) -> str:
-        if mode not in MODES:
-            raise CliError(self.t("err.mode_list", modes=", ".join(MODES)))
+        if mode not in MODE_ALIASES:
+            raise CliError(self.t("err.mode_list", modes=", ".join(MODE_ALIASES)))
+        mode = MODE_ALIASES[mode]
         self._write({DP_MODE: mode})
         return self.t("cli.mode", mode=mode)
 
@@ -726,7 +730,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("mode", help="work mode")
     mode_sub = p.add_subparsers(dest="mode_command", required=True)
     p_set = mode_sub.add_parser("set", help="set the mode")
-    p_set.add_argument("value", choices=MODES)
+    p_set.add_argument("value", choices=tuple(MODE_ALIASES))
     p_set.set_defaults(func=cmd_mode)
 
     p = sub.add_parser("set", help="set a parameter")

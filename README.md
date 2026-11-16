@@ -121,7 +121,7 @@ hiper off
 hiper toggle
 hiper status [--json]
 
-hiper mode set color|white|scene|music
+hiper mode set color|white|scene|music   # "colour" is the same as "color"
 
 hiper set bright 1-100          # percent
 hiper set temp 1000-6000        # kelvin, clamped to the lamp range

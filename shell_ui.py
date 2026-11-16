@@ -192,7 +192,7 @@ USAGE: dict[str, str] = {
     "off": "off",
     "toggle": "toggle",
     "set": "set bright|temp|color ...",
-    "mode": "mode set white|colour|scene|music",
+    "mode": "mode set white|colour|color|scene|music",
     "gradient": "gradient (R,G,B) (R,G,B) [seconds]",
     "raw": "raw <dp> <value>",
     "info": "info",
@@ -339,7 +339,7 @@ class Shell:
         elif words[0] == "set":
             candidates = ["bright", "temp", "color"] if len(words) == 1 else []
         elif words[0] == "mode":
-            candidates = ["set"] if len(words) == 1 else ["white", "colour", "scene", "music"]
+            candidates = ["set"] if len(words) == 1 else ["white", "colour", "color", "scene", "music"]
         elif words[0] == "lang":
             candidates = ["en", "ru"]
         elif words[0] in ("cd", "cat", "ls"):
