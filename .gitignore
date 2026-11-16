@@ -1,0 +1,22 @@
+# local device config: contains the lamp local_key
+device.json
+hiper.json
+.hiper/
+
+# build artefacts
+dist/
+build/
+*.spec
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# editors / OS
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini

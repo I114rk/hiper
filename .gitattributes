@@ -1,0 +1,4 @@
+* text=auto
+
+# Shell scripts must stay LF: they run in WSL, Linux and Termux.
+*.sh text eol=lf
